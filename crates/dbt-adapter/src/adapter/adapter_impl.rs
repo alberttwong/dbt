@@ -1180,9 +1180,12 @@ impl AdapterImpl {
             Replay(Bigquery | Databricks, replay) => {
                 replay.replay_submit_python_job(ctx, conn.as_mut(), state, model, compiled_code)
             }
-            Replay(RedisAdbc, _) | Impl(RedisAdbc, _) => Err(AdapterError::new(
+            Impl(RedisAdbc, engine) => {
+                python::redis::submit_python_job(engine.as_ref(), compiled_code)
+            }
+            Replay(RedisAdbc, _) => Err(AdapterError::new(
                 AdapterErrorKind::NotSupported,
-                "Python models are not supported for the Redis adapter",
+                "Local Python execution cannot be replayed",
             )),
             Replay(
                 adapter_type @ (Postgres | Redshift | Salesforce | DuckDB | LakeCompute | Spark
@@ -2097,7 +2100,10 @@ impl AdapterImpl {
         let conn = self.borrow_tlocal_connection(Some(state), node_id_from_state(state))?;
         let schema = match conn.get_table_schema(
             relation.database(),
-            relation.schema(),
+            match self.adapter_type() {
+                RedisAdbc if !relation.include_policy().schema => Some("pg_temp"),
+                _ => relation.schema(),
+            },
             relation.identifier().ok_or_else(|| {
                 AdapterError::new(
                     AdapterErrorKind::UnexpectedResult,
@@ -2972,8 +2978,7 @@ impl AdapterImpl {
         use ConstraintType::*;
 
         match (self.adapter_type(), ct) {
-            (RedisAdbc, NotNull | Check) => Enforced,
-            (RedisAdbc, PrimaryKey | Unique | ForeignKey) => NotEnforced,
+            (RedisAdbc, NotNull | Check | PrimaryKey | Unique | ForeignKey) => Enforced,
             (RedisAdbc, Custom) => NotSupported,
             // Postgres
             (Postgres, NotNull) => Enforced,
@@ -3664,6 +3669,18 @@ impl AdapterImpl {
             | Datafusion | Dremio | Oracle | RedisAdbc => {
                 unimplemented!("only available with BigQuery adapter")
             }
+        }
+    }
+
+    pub(crate) fn load_csv_file(&self, load: python::redis::CsvLoad) -> AdapterResult<i64> {
+        match self.adapter_type() {
+            RedisAdbc if !self.engine().is_replay() => {
+                python::redis::load_csv_file(self.engine().as_ref(), load)
+            }
+            _ => Err(AdapterError::new(
+                AdapterErrorKind::NotSupported,
+                "load_csv_file is not supported for this adapter",
+            )),
         }
     }
 

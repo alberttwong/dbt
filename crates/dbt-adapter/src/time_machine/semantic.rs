@@ -77,6 +77,7 @@ impl SemanticCategory {
             | "drop_schema"
             | "expand_target_column_types"
             | "load_dataframe"
+            | "load_csv_file"
             | "copy_table"
             | "update_columns"
             | "update_table_description"

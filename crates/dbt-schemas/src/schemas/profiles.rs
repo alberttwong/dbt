@@ -1557,6 +1557,16 @@ pub struct RedisAdbcDbConfig {
     pub time_zone: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub threads: Option<StringOrInteger>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aggregate_pushdown: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rename_rekey: Option<YmlValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_timeout: Option<YmlValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub write_timeout: Option<YmlValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub driver_options: Option<HashMap<String, YmlValue>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, DbtSchema, Merge)]

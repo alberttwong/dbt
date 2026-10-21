@@ -432,6 +432,18 @@ To fix this, add the following hint to the top of the model \"{model_name}\":
     }
 }
 
+// Unit-test dependencies are replaced with fixture CTEs. Invocation filters
+// must not empty or sample those fixture rows before assertions run.
+fn relation_for_node_type(relation: MinijinjaValue, node_type: NodeType) -> MinijinjaValue {
+    match node_type {
+        NodeType::UnitTest => relation
+            .downcast_object::<RelationObject>()
+            .map(|object| RelationObject::new(object.inner()).into_value())
+            .unwrap_or(relation),
+        _ => relation,
+    }
+}
+
 impl Object for RefFunction {
     fn call(
         self: &Arc<Self>,
@@ -484,7 +496,10 @@ impl Object for RefFunction {
                     }
                 }
 
-                Ok(resolved_relation)
+                Ok(relation_for_node_type(
+                    resolved_relation,
+                    self.validation_config.node_type,
+                ))
             }
             Err(_) => Err(MinijinjaError::new(
                 MinijinjaErrorKind::NonKey,
@@ -722,7 +737,10 @@ impl Object for SourceFunction {
                     }
                 }
 
-                Ok(relation)
+                Ok(relation_for_node_type(
+                    relation,
+                    self.validation_config.node_type,
+                ))
             }
             Err(_) => Err(MinijinjaError::new(
                 MinijinjaErrorKind::NonKey,
@@ -1014,6 +1032,92 @@ mod tests {
     use dbt_schemas::state::DummyNodeResolverTracker;
     use dbt_test_utils::TestEnvGuard;
     use std::env;
+
+    #[test]
+    fn unit_test_fixture_relations_ignore_invocation_empty_filter() {
+        use crate::node_resolver::NodeResolver;
+        use dbt_adapter::relation::Relation;
+        use dbt_adapter_core::AdapterType;
+        use dbt_schemas::state::ModelStatus;
+        let object = RelationObject::new_with_filter(
+            Arc::new(Relation::new(
+                AdapterType::RedisAdbc,
+                "redis".to_owned(),
+                "analytics".to_owned(),
+                "input".to_owned(),
+            )),
+            RunFilter {
+                empty: true,
+                sample: None,
+            },
+            None,
+        )
+        .into_value();
+        let mut resolver = NodeResolver {
+            root_package_name: "pkg".to_owned(),
+            ..Default::default()
+        };
+        resolver.refs.insert(
+            "pkg.input".to_owned(),
+            vec![(
+                "model.pkg.input".to_owned(),
+                object.clone(),
+                ModelStatus::Enabled,
+                None,
+            )],
+        );
+        resolver.sources.insert(
+            "pkg.raw.input".to_owned(),
+            vec![(
+                "source.pkg.raw.input".to_owned(),
+                object,
+                ModelStatus::Enabled,
+            )],
+        );
+        let resolver = Arc::new(resolver);
+        for (node_type, expected_empty) in [(NodeType::UnitTest, false), (NodeType::Model, true)] {
+            let validation = DependencyValidationConfig {
+                node_type,
+                ..Default::default()
+            };
+            let runtime = Arc::new(DbtRuntimeConfig::default());
+            let mut env = minijinja::Environment::new();
+            env.add_global(
+                "ref",
+                MinijinjaValue::from_object(RefFunction::new_with_validation(
+                    resolver.clone(),
+                    "pkg".to_owned(),
+                    runtime.clone(),
+                    validation.clone(),
+                    "model.pkg.consumer".to_owned(),
+                )),
+            );
+            env.add_global(
+                "source",
+                MinijinjaValue::from_object(SourceFunction::new_with_validation(
+                    resolver.clone(),
+                    "pkg".to_owned(),
+                    runtime,
+                    validation,
+                )),
+            );
+            let rendered = env
+                .render_str(
+                    "{{ ref('input') }}|{{ source('raw', 'input') }}",
+                    BTreeMap::<String, MinijinjaValue>::new(),
+                    &[],
+                )
+                .unwrap();
+            for relation in rendered.split('|') {
+                assert!(relation.contains("input"));
+                assert_eq!(
+                    relation.to_lowercase().contains("limit 0"),
+                    expected_empty,
+                    "{node_type:?}: {relation}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn test_dbt_metadata_envs_populated_from_env() {
