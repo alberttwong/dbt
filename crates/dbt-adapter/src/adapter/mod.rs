@@ -3746,6 +3746,52 @@ impl Adapter {
         }
     }
 
+    pub fn load_csv_file(&self, args: &[Value]) -> Result<Value, minijinja::Error> {
+        let iter = ArgsIter::new("load_csv_file", &["relation", "path", "column_types"], args);
+        let relation = iter.next_arg::<&Value>()?;
+        let relation = relation
+            .downcast_object::<RelationObject>()
+            .ok_or_else(|| {
+                minijinja::Error::new(
+                    minijinja::ErrorKind::InvalidOperation,
+                    "load_csv_file requires a Relation",
+                )
+            })?;
+        let path = iter.next_arg::<String>()?;
+        let column_types =
+            minijinja_value_to_typed_struct(iter.next_arg::<Value>()?).map_err(|e| {
+                minijinja::Error::new(minijinja::ErrorKind::SerdeDeserializeError, e.to_string())
+            })?;
+        let load = crate::python::redis::CsvLoad {
+            schema: relation.inner().schema().unwrap_or("public").to_owned(),
+            identifier: relation
+                .inner()
+                .identifier()
+                .ok_or_else(|| {
+                    minijinja::Error::new(
+                        minijinja::ErrorKind::InvalidOperation,
+                        "CSV relation requires an identifier",
+                    )
+                })?
+                .to_owned(),
+            path,
+            column_types,
+            limit: iter.next_kwarg::<Option<usize>>("limit")?,
+            sample_every: iter
+                .next_kwarg::<Option<usize>>("sample_every")?
+                .unwrap_or(1),
+            row_number_column: iter.next_kwarg::<Option<String>>("row_number_column")?,
+            timestamp_format: iter
+                .next_kwarg::<Option<String>>("timestamp_format")?
+                .unwrap_or_else(|| "%Y-%m-%d %H:%M:%S".to_owned()),
+        };
+        iter.finish()?;
+        match &self.inner {
+            Typed { adapter, .. } => Ok(Value::from(adapter.load_csv_file(load)?)),
+            Parse(_) => Ok(Value::from(0)),
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip(self, state), level = "trace")]
     pub fn load_dataframe(&self, state: &State, args: &[Value]) -> Result<Value, minijinja::Error> {
@@ -4106,6 +4152,7 @@ impl Adapter {
             // database: str, schema: str, table_name: str, file_path: str,
             // agate_table: AgateTable, column_overrides: dict, field_delimiter: str
             "load_dataframe" => self.load_dataframe(state, args),
+            "load_csv_file" => self.load_csv_file(args),
             "upload_file" => self.upload_file(state, args),
             // relation: BaseRelation
             "get_bq_table" => self.get_bq_table(state, args),

@@ -41,7 +41,6 @@ fn string_or_default<'a>(
 }
 
 fn parse_config(config: &AdapterConfig) -> Result<ConnectionConfig<'_>, AuthError> {
-    // Keep unsupported v1 options explicit until their v2 semantics are implemented.
     const FIELDS: &[&str] = &[
         "type",
         "driver",
@@ -52,6 +51,11 @@ fn parse_config(config: &AdapterConfig) -> Result<ConnectionConfig<'_>, AuthErro
         "schema",
         "threads",
         "time_zone",
+        "aggregate_pushdown",
+        "rename_rekey",
+        "read_timeout",
+        "write_timeout",
+        "driver_options",
     ];
     for (key, _) in config.repr() {
         if !key.as_str().is_some_and(|key| FIELDS.contains(&key)) {
@@ -98,6 +102,57 @@ fn parse_config(config: &AdapterConfig) -> Result<ConnectionConfig<'_>, AuthErro
             Cow::Borrowed(time_zone),
         ));
     }
+    const PROFILE_OPTIONS: &[(&str, &str)] = &[
+        ("aggregate_pushdown", "adbc.redis.aggregate_pushdown"),
+        ("rename_rekey", "adbc.redis.rename_rekey"),
+        ("read_timeout", "adbc.redis.read_timeout"),
+        ("write_timeout", "adbc.redis.write_timeout"),
+    ];
+    for (field, option) in PROFILE_OPTIONS {
+        if let Some(value) = config.get(field).filter(|value| !value.is_null()) {
+            let value = value
+                .as_scalar_string()
+                .ok_or_else(|| AuthError::config(format!("Redis '{field}' must be a scalar")))?;
+            if !value.is_empty() {
+                options.push((OptionDatabase::Other((*option).to_owned()), value));
+            }
+        }
+    }
+    if let Some(value) = config
+        .get("driver_options")
+        .filter(|value| !value.is_null())
+    {
+        let mapping = value
+            .as_mapping()
+            .ok_or_else(|| AuthError::config("Redis driver_options must be a mapping"))?;
+        for (key, value) in mapping {
+            let key = key
+                .as_str()
+                .ok_or_else(|| AuthError::config("Redis driver_options keys must be strings"))?;
+            if matches!(
+                key,
+                "uri"
+                    | "username"
+                    | "password"
+                    | "adbc.redis.default_schema"
+                    | "adbc.redis.time_zone"
+            ) || PROFILE_OPTIONS.iter().any(|(_, option)| *option == key)
+            {
+                return Err(AuthError::config(
+                    "driver_options cannot override a named Redis profile option",
+                ));
+            }
+            let value = value
+                .as_scalar_string()
+                .filter(|_| !value.is_null())
+                .ok_or_else(|| {
+                    AuthError::config(
+                        "Redis driver_options values must be strings, numbers, or booleans",
+                    )
+                })?;
+            options.push((OptionDatabase::Other(key.to_owned()), value));
+        }
+    }
     Ok(ConnectionConfig { uri, options })
 }
 
@@ -139,6 +194,48 @@ mod tests {
         auth_for_backend(BACKEND).configure(&AdapterConfig::new(Mapping::from_iter(
             fields.into_iter().map(|(key, value)| (key.into(), value)),
         )))
+    }
+
+    #[test]
+    fn v1_options_preserve_scalar_shapes_and_block_credential_overrides() {
+        let mapping = dbt_yaml::from_str::<Value>("aggregate_pushdown: exact\nrename_rekey: true\nread_timeout: 30\nwrite_timeout: 10m\ndriver_options:\n  adbc.redis.some_option: false\n").unwrap();
+        let config = AdapterConfig::new(mapping.as_mapping().unwrap().clone());
+        let builder = parse_config(&config).unwrap().apply(BACKEND).unwrap();
+        for (key, expected) in [
+            ("aggregate_pushdown", "exact"),
+            ("rename_rekey", "true"),
+            ("read_timeout", "30"),
+            ("write_timeout", "10m"),
+            ("some_option", "false"),
+        ] {
+            assert_eq!(
+                other_option_value(&builder, &format!("adbc.redis.{key}")),
+                Some(expected)
+            );
+        }
+        for option in [
+            "uri",
+            "username",
+            "password",
+            "adbc.redis.default_schema",
+            "adbc.redis.aggregate_pushdown",
+            "adbc.redis.rename_rekey",
+            "adbc.redis.time_zone",
+            "adbc.redis.read_timeout",
+            "adbc.redis.write_timeout",
+        ] {
+            let value: Value =
+                dbt_yaml::from_str(&format!("driver_options:\n  {option}: override\n")).unwrap();
+            assert!(
+                parse_config(&AdapterConfig::new(value.as_mapping().unwrap().clone())).is_err()
+            );
+        }
+        for invalid in ["[]", "{bad: [1]}", "{bad: null}"] {
+            let value: Value = dbt_yaml::from_str(&format!("driver_options: {invalid}\n")).unwrap();
+            assert!(
+                parse_config(&AdapterConfig::new(value.as_mapping().unwrap().clone())).is_err()
+            );
+        }
     }
 
     #[test]
@@ -237,7 +334,7 @@ mod tests {
             vec![("database", "other".into())],
             vec![("schema", "".into())],
             vec![("username", Value::bool(true))],
-            vec![("driver_options", Value::null())],
+            vec![("driver_options", Value::bool(true))],
             vec![("password", Value::Sequence(vec![], Default::default()))],
         ] {
             let error = configure(fields).unwrap_err();

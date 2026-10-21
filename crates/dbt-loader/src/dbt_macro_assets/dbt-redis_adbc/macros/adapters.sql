@@ -25,3 +25,24 @@
     {{ return(get_incremental_append_sql(arg_dict)) }}
   {%- endif -%}
 {%- endmacro %}
+
+{% macro redis_adbc__current_timestamp_in_utc_backcompat() -%}
+  (current_timestamp at time zone 'utc')::timestamp
+{%- endmacro %}
+
+{% macro redis_adbc__validate_sql(sql) -%}
+  {% call statement('validate_sql') -%}
+    select * from ({{ sql }}) as dbt_validate_sql where false limit 0
+  {%- endcall %}
+  {{ return(load_result('validate_sql')) }}
+{%- endmacro %}
+
+{% macro redis_adbc__list_relations_without_caching(schema_relation) -%}
+  {% set query %}
+    select table_catalog as database, table_name as name, table_schema as schema,
+           case when table_type = 'VIEW' then 'view' else 'table' end as type
+    from information_schema.tables
+    where table_schema = '{{ schema_relation.schema | replace("'", "''") }}'
+  {% endset %}
+  {{ return(run_query(query)) }}
+{%- endmacro %}
