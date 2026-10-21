@@ -13,3 +13,5 @@ mod relations;
 mod snowflake;
 mod snowflake_drop_table;
 mod spark;
+
+mod redis_adbc;

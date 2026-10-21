@@ -28,7 +28,7 @@ impl ColumnBuilder {
             Databricks | Spark => Self::build_databricks(field, type_ops),
             Redshift => Ok(Self::build_redshift(field, type_ops)),
             Postgres | Salesforce => Self::build_postgres_like(field, type_ops),
-            DuckDB | LakeCompute => Self::build_duckdb(field, type_ops),
+            DuckDB | LakeCompute | RedisAdbc => Self::build_from_arrow_type(field, type_ops),
             Fabric => Ok(Self::build_fabric(field, type_ops)),
             ClickHouse => Self::build_clickhouse(field, type_ops),
             Exasol => Ok(Self::build_exasol(field, type_ops)),
@@ -52,8 +52,8 @@ impl ColumnBuilder {
     ) -> Column {
         use AdapterType::*;
         match self.adapter_type {
-            Postgres => Column::new(
-                Postgres,
+            Postgres | RedisAdbc => Column::new(
+                self.adapter_type,
                 name,
                 dtype,
                 char_size,
@@ -524,7 +524,7 @@ impl ColumnBuilder {
     /// through the real formatter instead of a hardcoded "datetime" string,
     /// so a `WITH TIME ZONE` column keeps that information through the
     /// column round-trip instead of being collapsed to a naive timestamp.
-    fn build_duckdb(field: &FieldRef, type_ops: &dyn TypeOps) -> AdapterResult<Column> {
+    fn build_from_arrow_type(field: &FieldRef, type_ops: &dyn TypeOps) -> AdapterResult<Column> {
         let adapter_type = type_ops.adapter_type();
         let data_type_ref = field.data_type();
         let mut rendered_type = String::new();
