@@ -185,7 +185,9 @@ impl TypeOps for DefaultTypeOps {
         let adapter_type = self.0;
         match adapter_type {
             Bigquery => bigquery::try_format_type(data_type, nullable, out),
-            Postgres | Salesforce => postgres::try_format_type(data_type, nullable, out),
+            Postgres | Salesforce | RedisAdbc => {
+                postgres::try_format_type(data_type, nullable, out)
+            }
             Fabric => fabric::try_format_type(data_type, nullable, out),
             ClickHouse => clickhouse::try_format_type(data_type, nullable, out),
             _ => {
@@ -563,6 +565,7 @@ pub const fn get_field_sql_type_metadata_key(adapter_type: AdapterType) -> &'sta
         AdapterType::Fabric => FABRIC_METADATA_SQL_TYPE_KEY,
         AdapterType::ClickHouse => CLICKHOUSE_METADATA_SQL_TYPE_KEY,
         AdapterType::Exasol => "DATA_TYPE",
+        AdapterType::RedisAdbc => "ARROW:FLIGHT:SQL:TYPE_NAME",
         AdapterType::Starburst => todo!(),
         AdapterType::Athena => todo!(),
         AdapterType::Trino => todo!(),
@@ -616,7 +619,7 @@ impl SdfSchemaBuilder {
             }
             // no evidence that these drivers store comments in metadata, but just in case
             Postgres | Snowflake | Salesforce | Fabric | ClickHouse | Exasol | Starburst
-            | Athena | Trino | Dremio | Oracle | Datafusion => {
+            | Athena | Trino | Dremio | Oracle | Datafusion | RedisAdbc => {
                 metadata.get(ARROW_FIELD_COMMENT_METADATA_KEY)
             }
         };
@@ -665,7 +668,7 @@ impl SdfSchemaBuilder {
                     SdfSchema::from_sdf_arrow_schema(Some(self.original), sdf_arrow_schema);
                 Ok(sdf_schema)
             }
-            Postgres | Snowflake | Salesforce => {
+            Postgres | Snowflake | Salesforce | RedisAdbc => {
                 // NOTE(felipecrv): this is not correct, but it's a temporary fallback
                 // that allows us to call [to_sdf_arrow_schema] from anywhere.
                 //
@@ -1048,7 +1051,8 @@ pub const fn max_varchar_size(adapter_type: AdapterType) -> Option<usize> {
         Snowflake => Some(16_777_216),
         Redshift => Some(256),
         Postgres | Bigquery | Databricks | Salesforce | Spark | DuckDB | LakeCompute | Fabric
-        | ClickHouse | Exasol | Starburst | Athena | Trino | Dremio | Oracle | Datafusion => None,
+        | ClickHouse | Exasol | Starburst | Athena | Trino | Dremio | Oracle | Datafusion
+        | RedisAdbc => None,
     }
 }
 
@@ -1059,7 +1063,8 @@ pub const fn max_varbinary_size(adapter_type: AdapterType) -> Option<usize> {
         Redshift => Some(65_535),
         // TODO: define limits for more systems
         Postgres | Bigquery | Databricks | Salesforce | Spark | DuckDB | LakeCompute | Fabric
-        | ClickHouse | Exasol | Starburst | Athena | Trino | Dremio | Oracle | Datafusion => None,
+        | ClickHouse | Exasol | Starburst | Athena | Trino | Dremio | Oracle | Datafusion
+        | RedisAdbc => None,
     }
 }
 

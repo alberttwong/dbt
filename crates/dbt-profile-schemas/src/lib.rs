@@ -50,6 +50,10 @@ impl ProfileSetup {
         }
 
         match self.adapter_type {
+            RedisAdbc => Err(fs_err!(
+                ErrorCode::InvalidConfig,
+                "Create a profiles.yml entry with type: redis_adbc; interactive Redis setup is not yet supported"
+            )),
             Snowflake => {
                 let c0 = unwrap_db_config!(Snowflake);
                 let c1 = snowflake_config::setup_snowflake_profile(c0.map(Box::as_ref))?;

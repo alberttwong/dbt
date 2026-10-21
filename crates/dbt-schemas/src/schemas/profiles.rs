@@ -87,6 +87,8 @@ pub enum DbConfig {
     // Decodable,
     // Upsolver,
     // Starrocks,
+    #[serde(untagged)]
+    RedisAdbc(Box<RedisAdbcDbConfig>),
 }
 
 macro_rules! impl_from_db_config {
@@ -109,6 +111,7 @@ impl_from_db_config!(Databricks, DatabricksDbConfig);
 impl_from_db_config!(DuckDB, DuckDbConfig);
 impl_from_db_config!(Fabric, FabricDbConfig);
 impl_from_db_config!(Exasol, ExasolDbConfig);
+impl_from_db_config!(RedisAdbc, RedisAdbcDbConfig);
 impl_from_db_config!(ClickHouse, ClickHouseDbConfig);
 
 /// Resolves BigQuery's `compute_region` / legacy `dataproc_region` alias in a raw profiles.yml
@@ -166,6 +169,7 @@ impl DbConfig {
             }
             DbConfig::Spark(config) => config.host.as_deref(),
             DbConfig::Fabric(config) => config.host.as_deref(),
+            DbConfig::RedisAdbc(_) => None,
             DbConfig::Exasol(config) => config.host.as_deref(),
             DbConfig::ClickHouse(config) => config.host.as_deref(),
         }
@@ -349,6 +353,7 @@ impl DbConfig {
                 "trust_cert",
                 "api_url",
             ],
+            AdapterType::RedisAdbc => &["driver", "database", "schema", "threads", "time_zone"],
             AdapterType::Exasol => &[
                 "host",
                 "port",
@@ -422,6 +427,7 @@ impl DbConfig {
             DbConfig::Fabric(config) => dbt_yaml::to_value(config),
             DbConfig::DuckDB(config) => dbt_yaml::to_value(config),
             DbConfig::LakeCompute(config) => dbt_yaml::to_value(config),
+            DbConfig::RedisAdbc(config) => dbt_yaml::to_value(config),
             DbConfig::Exasol(config) => dbt_yaml::to_value(config),
             DbConfig::ClickHouse(config) => dbt_yaml::to_value(config),
         }
@@ -440,6 +446,7 @@ impl DbConfig {
             DbConfig::DuckDB(..) => AdapterType::DuckDB,
             DbConfig::Spark(..) => AdapterType::Spark,
             DbConfig::Fabric(..) => AdapterType::Fabric,
+            DbConfig::RedisAdbc(..) => AdapterType::RedisAdbc,
             DbConfig::Exasol(..) => AdapterType::Exasol,
             DbConfig::ClickHouse(..) => AdapterType::ClickHouse,
             DbConfig::LakeCompute(..) => AdapterType::LakeCompute,
@@ -459,6 +466,7 @@ impl DbConfig {
             DbConfig::DuckDB(config) => config.database.as_ref(),
             DbConfig::Spark(config) => config.database(),
             DbConfig::Fabric(config) => config.database.as_ref(),
+            DbConfig::RedisAdbc(config) => config.database.as_ref(),
             DbConfig::Exasol(config) => config.database.as_ref(),
             DbConfig::ClickHouse(config) => config.database.as_ref(),
             DbConfig::LakeCompute(config) => config.database.as_ref(),
@@ -482,6 +490,7 @@ impl DbConfig {
                 .database
                 .to_owned(),
             DbConfig::Databricks(_) => DEFAULT_DATABRICKS_DATABASE.to_string(),
+            DbConfig::RedisAdbc(_) => "redis".to_string(),
             _ => "".to_string(),
         }
     }
@@ -500,6 +509,7 @@ impl DbConfig {
             DbConfig::LakeCompute(config) => config.schema.as_ref(),
             DbConfig::Salesforce(_) => None,
             DbConfig::Fabric(config) => config.schema.as_ref(),
+            DbConfig::RedisAdbc(config) => config.schema.as_ref(),
             DbConfig::Exasol(config) => config.schema.as_ref(),
             DbConfig::ClickHouse(config) => config.schema.as_ref(),
         }
@@ -518,6 +528,7 @@ impl DbConfig {
             DbConfig::Salesforce(_) => None,
             DbConfig::Spark(config) => config.threads.as_ref(),
             DbConfig::Fabric(_) => None,
+            DbConfig::RedisAdbc(config) => config.threads.as_ref(),
             DbConfig::Exasol(config) => config.threads.as_ref(),
             DbConfig::ClickHouse(config) => config.threads.as_ref(),
             DbConfig::LakeCompute(config) => config.threads.as_ref(),
@@ -537,6 +548,7 @@ impl DbConfig {
             DbConfig::Salesforce(_) => (),
             DbConfig::Spark(config) => config.threads = threads,
             DbConfig::Fabric(_) => (),
+            DbConfig::RedisAdbc(config) => config.threads = threads,
             DbConfig::Exasol(config) => config.threads = threads,
             DbConfig::ClickHouse(config) => config.threads = threads,
             DbConfig::LakeCompute(config) => config.threads = threads,
@@ -1512,6 +1524,41 @@ pub struct FabricDbConfig {
     pub api_url: Option<String>, // default = "https://api.fabric.microsoft.com/v1"
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, DbtSchema)]
+pub enum RedisAdbcProfileType {
+    #[default]
+    #[serde(rename = "redis_adbc")]
+    RedisAdbc,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, DbtSchema, Merge)]
+#[merge(strategy = merge_strategies_extend::overwrite_option)]
+#[serde(rename_all = "snake_case")]
+pub struct RedisAdbcDbConfig {
+    #[serde(rename = "type")]
+    #[merge(skip)]
+    pub type_: RedisAdbcProfileType,
+    #[serde(flatten)]
+    #[merge(strategy = merge_strategies_extend::overwrite_always)]
+    pub extra: HashMap<String, YmlValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub driver: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uri: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub database: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_zone: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub threads: Option<StringOrInteger>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, DbtSchema, Merge)]
 #[merge(strategy = merge_strategies_extend::overwrite_option)]
 #[serde(rename_all = "snake_case")]
@@ -1773,6 +1820,7 @@ pub enum TargetContext {
     Spark(SparkTargetEnv),
     Fabric(FabricTargetEnv),
     Exasol(ExasolTargetEnv),
+    RedisAdbc(CommonTargetContext),
     ClickHouse(ClickHouseTargetEnv),
     // Add other variants as needed
 }
@@ -2411,6 +2459,38 @@ impl TryFrom<DbConfig> for TargetContext {
                     authentication,
                 }))
             }
+            DbConfig::RedisAdbc(config) => {
+                if !config.extra.is_empty() {
+                    return Err("Unsupported Redis profile option".to_string());
+                }
+                if config
+                    .database
+                    .as_deref()
+                    .is_some_and(|database| database != "redis")
+                {
+                    return Err("Redis only supports the redis catalog".to_string());
+                }
+                Ok(TargetContext::RedisAdbc(CommonTargetContext {
+                    database: config.database.unwrap_or_else(|| "redis".to_string()),
+                    schema: config.schema.unwrap_or_else(|| "public".to_string()),
+                    type_: adapter_type,
+                    threads: config
+                        .threads
+                        .map(|value| {
+                            value
+                                .to_string()
+                                .parse::<u16>()
+                                .ok()
+                                .filter(|n| *n > 0)
+                                .ok_or_else(|| {
+                                    "Redis 'threads' must be a positive integer below 65536"
+                                        .to_string()
+                                })
+                        })
+                        .transpose()?,
+                }))
+            }
+
             DbConfig::Exasol(config) => Ok(TargetContext::Exasol(ExasolTargetEnv {
                 host: config.host.clone(),
                 user: config.user.clone(),
@@ -3331,5 +3411,54 @@ threads: 8
 
         assert_eq!(config.get_database(), None);
         assert_eq!(config.get_database_or_default(), "");
+    }
+}
+
+#[cfg(test)]
+mod redis_adbc_tests {
+    use super::*;
+
+    #[test]
+    fn native_profile_round_trips_and_hides_credentials_from_target() {
+        let config: DbConfig = dbt_yaml::from_str(
+            "type: redis_adbc\ndriver: /tmp/libadbc_driver_redis.so\nuri: redis://alice:uri-secret@localhost:6379/0\nusername: alice\npassword: profile-secret\nschema: analytics\nthreads: 2\n"
+        ).unwrap();
+        assert_eq!(config.adapter_type(), AdapterType::RedisAdbc);
+        assert_eq!(config.get_database_or_default(), "redis");
+        assert!(config.get_unique_field().is_none());
+        let serialized = dbt_yaml::to_string(&config).unwrap();
+        let parsed: DbConfig = dbt_yaml::from_str(&serialized).unwrap();
+        assert_eq!(parsed, config);
+        let context = TargetContext::try_from(config).unwrap();
+        let serialized = dbt_yaml::to_string(&context).unwrap();
+        assert!(serialized.contains("type: redis_adbc"));
+        assert!(serialized.contains("schema: analytics"));
+        assert!(serialized.contains("database: redis"));
+        assert!(serialized.contains("threads: 2"));
+        assert!(!serialized.contains("secret"));
+        for key in DbConfig::connection_keys_for(AdapterType::RedisAdbc) {
+            assert!(!["uri", "password"].contains(key));
+        }
+    }
+
+    #[test]
+    fn profile_defaults_and_thread_validation() {
+        for threads in ["0", "-1", "65536", "abc"] {
+            let config: DbConfig =
+                dbt_yaml::from_str(&format!("type: redis_adbc\nthreads: {threads}\n")).unwrap();
+            assert!(TargetContext::try_from(config).is_err());
+        }
+        let config: DbConfig = dbt_yaml::from_str("type: redis_adbc\n").unwrap();
+        let TargetContext::RedisAdbc(context) = TargetContext::try_from(config).unwrap() else {
+            panic!("Redis context expected")
+        };
+        assert_eq!(context.database, "redis");
+        assert_eq!(context.schema, "public");
+        let config =
+            dbt_yaml::from_str::<DbConfig>("type: redis_adbc\nunknown_option: true\n").unwrap();
+        assert!(TargetContext::try_from(config).is_err());
+        assert!(dbt_yaml::from_str::<DbConfig>("type: unknown_redis\n").is_err());
+        let config: DbConfig = dbt_yaml::from_str("type: redis_adbc\ndatabase: other\n").unwrap();
+        assert!(TargetContext::try_from(config).is_err());
     }
 }

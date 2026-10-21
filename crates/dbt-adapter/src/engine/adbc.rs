@@ -20,7 +20,7 @@ use parking_lot::RwLock;
 
 use crate::cache::RelationCache;
 use crate::engine::query_comment::QueryCommentConfig;
-use crate::errors::{AdapterError, adbc_error_to_adapter_error};
+use crate::errors::{AdapterError, AdapterErrorKind, adbc_error_to_adapter_error};
 use crate::metadata::clickhouse::ClickHouseCapabilities;
 use crate::sql_types::TypeOps;
 use crate::stmt_splitter::StmtSplitter;
@@ -217,7 +217,25 @@ impl AdbcEngine {
             })
             .map_err(crate::errors::auth_error_to_adapter_error)?;
         let load_strategy = match (use_cloud_credentials, self.adapter_type) {
+            (true, AdapterType::RedisAdbc) => {
+                return Err(AdapterError::new(
+                    AdapterErrorKind::NotSupported,
+                    "Redis does not support dbt Cloud credentials",
+                ));
+            }
             (true, _) => LoadStrategy::Bridge,
+            (false, AdapterType::RedisAdbc) => {
+                let path = config.get_str("driver").filter(|path| !path.is_empty())
+                    .ok_or_else(|| AdapterError::new(AdapterErrorKind::Configuration,
+                        "Set the Redis 'driver' profile field to an absolute shared-library path"))?;
+                if !std::path::Path::new(path).is_absolute() {
+                    return Err(AdapterError::new(
+                        AdapterErrorKind::Configuration,
+                        "The Redis 'driver' profile field must be an absolute shared-library path",
+                    ));
+                }
+                LoadStrategy::System(Some(path.to_owned()))
+            }
             (false, AdapterType::DuckDB) => LoadStrategy::SystemThenCdnCache,
             (false, _) => LoadStrategy::CdnCache,
         };
