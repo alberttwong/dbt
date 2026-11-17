@@ -1,0 +1,7 @@
+kind: Under the Hood
+body: Run public fork CI on available hosted runners and fix strict Redis adapter lint failures.
+time: 2026-11-17T10:01:59.641521-08:00
+custom:
+    author: alberttwong
+    issue: ' '
+    project: dbt-core

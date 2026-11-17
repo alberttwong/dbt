@@ -51,9 +51,10 @@ jobs:
   check_run_approval:
     # Job-level `if` cannot read `env`, so CI_LABEL is spelled out here.
     if: >-
-      github.event.action != 'labeled'
-      || (github.event.label.name == 'ci:approve-public-fork-ci'
-          && github.event.pull_request.head.repo.full_name != github.repository)
+      github.repository_owner == 'dbt-labs'
+      && (github.event.action != 'labeled'
+          || (github.event.label.name == 'ci:approve-public-fork-ci'
+              && github.event.pull_request.head.repo.full_name != github.repository))
     permissions:
       pull-requests: write
       contents: read

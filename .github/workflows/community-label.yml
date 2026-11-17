@@ -34,7 +34,8 @@ jobs:
     # if the PR is converted out of draft, determine if it needs to be labeled
     if: |
       (
-        github.event_name == 'pull_request_target'
+        github.repository_owner == 'dbt-labs'
+        && github.event_name == 'pull_request_target'
         && !contains(github.event.pull_request.labels.*.name, 'community')
         && (
           (github.event.action == 'opened' && github.event.pull_request.draft == false)
@@ -55,7 +56,8 @@ jobs:
     # If this issue is opened, determine if it needs to be labeled
     if: |
       (
-        github.event_name == 'issues'
+        github.repository_owner == 'dbt-labs'
+        && github.event_name == 'issues'
         && !contains(github.event.issue.labels.*.name, 'triage')
         && github.event.issue.user.type != 'Bot'
       )
