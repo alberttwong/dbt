@@ -44,6 +44,10 @@ env:
   CARGO_INCREMENTAL: 0
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # Keep the full workspace within public GitHub-hosted runner resources.
+  CARGO_BUILD_JOBS: 2
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
 
 jobs:
   # ------------------------------------------------------------------
@@ -67,12 +71,15 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: depot-ubuntu-24.04-32
-    timeout-minutes: 45
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
     env:
       RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # actions/checkout@v4
+
+      - name: Free build disk space
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
 
       - uses: ./.github/actions/setup-rust-linux
         with:
@@ -96,8 +103,8 @@ jobs:
   # ------------------------------------------------------------------
   test:
     name: Test workspace
-    runs-on: depot-ubuntu-24.04-32
-    timeout-minutes: 60
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
     env:
       RUSTC_WRAPPER: sccache
       # Load-bearing, not a tuning knob: the parser/jinja recursion overflows
@@ -110,6 +117,9 @@ jobs:
       RUST_BACKTRACE: "0"
     steps:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # actions/checkout@v4
+
+      - name: Free build disk space
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
 
       - uses: ./.github/actions/setup-rust-linux
         with:
