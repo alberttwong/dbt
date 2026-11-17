@@ -1,6 +1,10 @@
 """Arrow bridge for the native adapter; no dependency on a Python dbt adapter."""
 import contextlib
 import json
+import random
+import time
+
+import adbc_driver_manager as adbc
 import sys
 
 import adbc_driver_manager.dbapi as dbapi
@@ -34,14 +38,38 @@ class Session:
             return cursor.fetch_arrow_table()
 
 
+def ingest(connection, identifier, data, schema):
+    for attempt in range(20):
+        try:
+            with connection.cursor() as cursor:
+                upload = data
+                # A schema-only Flight upload has no messages. Build a fresh
+                # zero-row reader per attempt from the retained immutable table.
+                if isinstance(data, pa.Table) and data.num_rows == 0:
+                    batch = pa.RecordBatch.from_arrays([pa.array([], type=f.type) for f in data.schema], schema=data.schema)
+                    upload = pa.RecordBatchReader.from_batches(data.schema, [batch])
+                return cursor.adbc_ingest(identifier, upload, mode='create', db_schema_name=schema)
+        except adbc.Error as error:
+            # A table supplies fresh input. One-shot readers and unknown commit
+            # outcomes cannot replay an upload safely.
+            if not (isinstance(data, pa.Table) and error.status_code == adbc.AdbcStatusCode.IO
+                    and ((error.sqlstate == '40001'
+                          and 'snapshot catalog changed concurrently; retry the statement' in str(error))
+                         or (error.vendor_code == 14
+                             and '[redis] snapshot catalog changed concurrently; retry the statement (40001)' in str(error)
+                             and '(Unavailable;' in str(error)))
+                    and attempt < 19):
+                raise
+            time.sleep(random.uniform(.05, .1) * min(2 ** attempt, 16))
+
+
 def run_model(connection, parameters):
     namespace = {'__name__': '__dbt_model__'}
     exec(compile(parameters['code'], 'dbt_model.py', 'exec'), namespace)
     session = Session(connection)
     result = arrow_result(namespace['model'](namespace['dbtObj'](lambda name: session.sql('select * from ' + name)), session))
     target = namespace['dbt_redis_adbc_target']
-    with connection.cursor() as cursor:
-        return cursor.adbc_ingest(target['identifier'], result, mode='create', db_schema_name=target['schema'])
+    return ingest(connection, target['identifier'], result, target['schema'])
 
 
 def load_csv(connection, parameters):
@@ -77,13 +105,17 @@ def load_csv(connection, parameters):
     with connection.cursor() as cursor:
         cursor.execute(parameters['create_schema_sql'])
         cursor.execute(parameters['drop_table_sql'])
-        return cursor.adbc_ingest(parameters['identifier'], table, mode='create', db_schema_name=parameters['schema'])
+    return ingest(connection, parameters['identifier'], table, parameters['schema'])
 
 
 def main():
     request = json.load(sys.stdin)
     with contextlib.redirect_stdout(sys.stderr):
-        with dbapi.connect(driver=request['driver'], entrypoint='AdbcDriverInit', db_kwargs=request['options'], autocommit=True) as connection:
+        with dbapi.connect(driver=request['driver'], entrypoint=request.get('entrypoint', 'AdbcDriverInit'), db_kwargs=request['options'], autocommit=True) as connection:
+            for sql in request.get('init_sql', []):
+                with connection.cursor() as cursor:
+                    cursor.execute(sql)
+                    cursor.fetchall()
             if request['operation'] == 'model':
                 rows = run_model(connection, request['parameters'])
             elif request['operation'] == 'csv':
